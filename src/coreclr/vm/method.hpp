@@ -1828,7 +1828,7 @@ public:
             return false;
         auto asyncType = GetAddrOfAsyncMethodData()->type;
 
-        return asyncType == AsyncMethodType::Async;
+        return asyncType == AsyncMethodType::Async || asyncType == AsyncMethodType::AsyncToTask;
     }
 
     inline bool RequiresAsyncContinuationArg()
