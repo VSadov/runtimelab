@@ -13708,6 +13708,7 @@ namespace System.Runtime.CompilerServices
         public delegate void TryCode(object? userData);
         public static void UnsafeAwaitAwaiterFromRuntimeAsync<TAwaiter>(TAwaiter awaiter) where TAwaiter : ICriticalNotifyCompletion { }
         public static void AwaitAwaiterFromRuntimeAsync<TAwaiter>(TAwaiter awaiter) where TAwaiter : INotifyCompletion { }
+        public static T Await<T>(System.Threading.Tasks.Task<T> task) { throw null; }
     }
     public sealed partial class RuntimeWrappedException : System.Exception
     {

@@ -4915,7 +4915,9 @@ bool IsSpecialCaseAsyncRet(MethodDesc* pMD)
     // causing loading to happen? Also, can we just mark them as async2 in SPC,
     // or force them to be fully interruptible?
     LPCUTF8 name = pMD->GetName();
-    return strcmp(name, "UnsafeAwaitAwaiterFromRuntimeAsync") == 0 || strcmp(name, "AwaitAwaiterFromRuntimeAsync") == 0;
+    return strcmp(name, "UnsafeAwaitAwaiterFromRuntimeAsync") == 0 ||
+        strcmp(name, "AwaitAwaiterFromRuntimeAsync") == 0 ||
+        strcmp(name, "Await") == 0;
 }
 
 static bool GetReturnAddressHijackInfo(EECodeInfo *pCodeInfo, ReturnKind *pReturnKind, bool* hasAsyncRet)

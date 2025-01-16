@@ -208,6 +208,75 @@ namespace System.Runtime.CompilerServices
             SuspendAsync2(sentinelContinuation);
             return;
         }
+
+        // TODO: should this be called "AwaitFromRuntimeAsync" ?  (i.e. same as above, but no "Awaiter")
+        //
+        // Marked intrinsic since this needs to be
+        // recognizes as an async2 call.
+        [Intrinsic]
+        [BypassReadyToRun]
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public static unsafe T Await<T>(Task<T> task)
+        {
+            // TODO: handle complete tasks more efficiently.
+            //if (!task.IsCompleted)
+            //{
+                ref RuntimeAsyncAwaitState state = ref t_runtimeAsyncAwaitState;
+                Continuation? sentinelContinuation = state.SentinelContinuation;
+                if (sentinelContinuation == null)
+                    state.SentinelContinuation = sentinelContinuation = new Continuation();
+
+                Continuation myContinuation = new Continuation();
+                myContinuation.GCData = new object[] { task };
+                myContinuation.Resume = &AwaitHelper<T>.Resume;
+
+                state.Notifier = task.GetAwaiter();
+                sentinelContinuation.Next = myContinuation;
+
+                //     RETURN {default(T), myContinuation}
+                //
+                SuspendAsync2(myContinuation);
+
+                // unreachable
+                return task.ResultOnSuccess;
+            //}
+            //else
+            //{
+            //    //   RETURN {task.Result, null}
+            //    //
+            //    T result = task.Result;
+            //    ReturnAsync2(Unsafe.AsPointer(ref result));
+            //
+            //    // unreachable
+            //    return result;
+            //}
+        }
+
+        internal static class AwaitHelper<T>
+        {
+            public static Continuation? Resume(Continuation continuation)
+            {
+                Task<T> task = (Task<T>)continuation.GCData![0]!;
+                Continuation next = continuation.Next!;
+
+                if (IsReferenceOrContainsReferences<T>())
+                {
+                    next.GCData![0] = task.Result;
+                }
+                else
+                {
+                    int retIndex =
+                        (next.Flags & CorInfoContinuationFlags.CORINFO_CONTINUATION_OSR_IL_OFFSET_IN_DATA) != 0 ?
+                        4 :
+                        0;
+
+                    // TODO: WriteUnaligned?
+                    Unsafe.As<byte, T>(ref next.Data![retIndex]) = task.Result;
+                }
+
+                return null;
+            }
+        }
 #endif
     }
 }

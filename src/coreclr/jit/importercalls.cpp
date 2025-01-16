@@ -528,7 +528,8 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
         // calls in JIT generated state machines only.
         if (compIsAsync2() &&
             ((ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_AwaitAwaiterFromRuntimeAsync) ||
-             (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_UnsafeAwaitAwaiterFromRuntimeAsync)))
+             (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_UnsafeAwaitAwaiterFromRuntimeAsync) ||
+             (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_Await)))
         {
             assert((call != nullptr) && call->OperIs(GT_CALL));
             call->AsCall()->gtIsAsyncCall = true;
@@ -3376,7 +3377,8 @@ GenTree* Compiler::impIntrinsic(CORINFO_CLASS_HANDLE    clsHnd,
     }
 
     if ((ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_AwaitAwaiterFromRuntimeAsync) ||
-        (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_UnsafeAwaitAwaiterFromRuntimeAsync))
+        (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_UnsafeAwaitAwaiterFromRuntimeAsync) ||
+        (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_Await))
     {
         // These are marked intrinsics simply to mark the call node as async,
         // which the caller will do. Make sure we keep pIntrinsicName assigned
@@ -10839,6 +10841,11 @@ NamedIntrinsic Compiler::lookupNamedIntrinsic(CORINFO_METHOD_HANDLE method)
                             {
                                 result =
                                     NI_System_Runtime_CompilerServices_RuntimeHelpers_UnsafeAwaitAwaiterFromRuntimeAsync;
+                            }
+                            else if (strcmp(methodName, "Await") == 0)
+                            {
+                                result =
+                                    NI_System_Runtime_CompilerServices_RuntimeHelpers_Await;
                             }
                             else if (strcmp(methodName, "SuspendAsync2") == 0)
                             {

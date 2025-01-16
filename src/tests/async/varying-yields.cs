@@ -4,6 +4,8 @@
 //#define ASYNC1_TASK
 //#define ASYNC1_VALUETASK
 
+#pragma warning disable 4014, 1998
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -91,9 +93,19 @@ public
             double liveState3 = _yieldProbability;
 
             if (depth == 0)
+#if AWAIT
+                return RuntimeHelpers.Await(Loop());
+#else
                 return await Loop();
+#endif
 
-            long result = await Run(depth - 1);
+            long result =
+#if AWAIT
+                RuntimeHelpers.Await(Run(depth - 1));
+#else
+                await Run(depth - 1);
+#endif
+
             Sink = (int)liveState1 + (int)liveState2 + (int)(1 / liveState3) + depth;
             return result;
         }
@@ -117,7 +129,12 @@ private
             {
                 for (int i = 0; i < 20; i++)
                 {
-                    numIters += await DoYields();
+                    numIters +=
+#if AWAIT
+                        RuntimeHelpers.Await(DoYields());
+#else
+                        await DoYields();
+#endif
                 }
             }
 
