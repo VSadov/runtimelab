@@ -429,16 +429,58 @@ extern "C" uint8_t RhpCheckedAssignRefAVLocation;
 extern "C" uint8_t RhpAssignRefAVLocation;
 extern "C" uint8_t RhpAssignRefAVLocationNotHeap;
 
+#if defined(TARGET_AMD64) || defined(TARGET_ARM64)
+// The variants of RhpAssignRef, which the EE runs in its place when the GC asks for them (see GCWriteBarrierVariant,
+// GetAssignRefVariant and writebarrier.asm). RhpAssignRef itself is the SATORI_DYNAMIC variant.
+extern "C" uint8_t RhpCheckedEntry;
+extern "C" uint8_t RhpAssignRef_SATORI_DYNAMIC2;
+extern "C" uint8_t RhpAssignRef_SATORI_DYNAMIC2_End;
+extern "C" uint8_t RhpCheckedEntry_SATORI_DYNAMIC2;
+extern "C" uint8_t RhpAssignRefAVLocation_SATORI_DYNAMIC2;
+extern "C" uint8_t RhpAssignRefAVLocationNotHeap_SATORI_DYNAMIC2;
+extern "C" uint8_t RhpAssignRef_SATORI;
+extern "C" uint8_t RhpAssignRef_SATORI_End;
+extern "C" uint8_t RhpCheckedEntry_SATORI;
+extern "C" uint8_t RhpAssignRefAVLocation_SATORI;
+extern "C" uint8_t RhpAssignRefAVLocationNotHeap_SATORI;
+extern "C" uint8_t RhpAssignRef_SATORI2;
+extern "C" uint8_t RhpAssignRef_SATORI2_End;
+extern "C" uint8_t RhpCheckedEntry_SATORI2;
+extern "C" uint8_t RhpAssignRefAVLocationNotHeap_SATORI2;
+extern "C" uint8_t RhpAssignRef_SATORI_CONCURRENT;
+extern "C" uint8_t RhpAssignRef_SATORI_CONCURRENT_End;
+extern "C" uint8_t RhpCheckedEntry_SATORI_CONCURRENT;
+extern "C" uint8_t RhpAssignRefAVLocation_SATORI_CONCURRENT;
+extern "C" uint8_t RhpAssignRefAVLocationNotHeap_SATORI_CONCURRENT;
+extern "C" uint8_t RhpAssignRef_SATORI_CONCURRENT2;
+extern "C" uint8_t RhpAssignRef_SATORI_CONCURRENT2_End;
+extern "C" uint8_t RhpCheckedEntry_SATORI_CONCURRENT2;
+extern "C" uint8_t RhpAssignRefAVLocation_SATORI_CONCURRENT2;
+extern "C" uint8_t RhpAssignRefAVLocationNotHeap_SATORI_CONCURRENT2;
+#endif // defined(TARGET_AMD64) || defined(TARGET_ARM64)
+
 static uintptr_t avLocations[] = 
 { 
     (uintptr_t)&RhpCheckedAssignRefAVLocation,
     (uintptr_t)&RhpAssignRefAVLocation,
     (uintptr_t)&RhpAssignRefAVLocationNotHeap,
+#if defined(TARGET_AMD64) || defined(TARGET_ARM64)
+    // The variants run in place of RhpAssignRef.
+    (uintptr_t)&RhpAssignRefAVLocation_SATORI_DYNAMIC2,
+    (uintptr_t)&RhpAssignRefAVLocationNotHeap_SATORI_DYNAMIC2,
+    (uintptr_t)&RhpAssignRefAVLocation_SATORI,
+    (uintptr_t)&RhpAssignRefAVLocationNotHeap_SATORI,
+    (uintptr_t)&RhpAssignRefAVLocationNotHeap_SATORI2,
+    (uintptr_t)&RhpAssignRefAVLocation_SATORI_CONCURRENT,
+    (uintptr_t)&RhpAssignRefAVLocationNotHeap_SATORI_CONCURRENT,
+    (uintptr_t)&RhpAssignRefAVLocation_SATORI_CONCURRENT2,
+    (uintptr_t)&RhpAssignRefAVLocationNotHeap_SATORI_CONCURRENT2,
+#endif
     0
 };
 
 // The assembly write barriers cache the values of these globals (card table, card bundle table,
-// write barrier state) directly in patchable slots embedded in their own code, instead of
+// address of the write barrier state) directly in patchable slots embedded in their own code, instead of
 // referencing the globals by address -- on amd64 this is the immediate operand of a MOV
 // instruction, on arm64 it is a co-located literal-pool entry -- so the cached values remain
 // correct no matter where the barrier code is copied to (a PC-relative reference to the actual
@@ -450,14 +492,26 @@ static uintptr_t avLocations[] =
 extern "C" uint8_t PatchableValue_CheckedAssignRef_CardBundleTable;
 #if FEATURE_SATORI_EXTERNAL_OBJECTS
 extern "C" uint8_t PatchableValue_AssignRef_CardBundleTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_DYNAMIC2_CardBundleTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CardBundleTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI2_CardBundleTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CONCURRENT_CardBundleTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CONCURRENT2_CardBundleTable;
 #endif
-extern "C" uint8_t PatchableValue_AssignAndMarkCards_WriteBarrierState;
-extern "C" uint8_t PatchableValue_MarkCards_CardTable;
-extern "C" uint8_t PatchableValue_CardSet_WriteBarrierState;
+extern "C" uint8_t PatchableValue_AssignRef_BarrierStateAddress;
+extern "C" uint8_t PatchableValue_AssignRef_CardTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_DYNAMIC2_BarrierStateAddress;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_DYNAMIC2_CardTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CardTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CONCURRENT_CardTable;
+extern "C" uint8_t PatchableValue_AssignRef_SATORI_CONCURRENT2_CardTable;
 
 extern "C" uint32_t* g_gc_card_table;
 extern "C" uint32_t* g_gc_card_bundle_table;
 extern "C" uint8_t* g_write_barrier_state;
+
+// The barriers that read the barrier state find it at this address.
+static uint8_t** s_writeBarrierStateAddress = &g_write_barrier_state;
 
 static GCWriteBarrierPatchableValue assignRefPatchableValues[] =
 {
@@ -465,16 +519,145 @@ static GCWriteBarrierPatchableValue assignRefPatchableValues[] =
 #if FEATURE_SATORI_EXTERNAL_OBJECTS
     { &PatchableValue_AssignRef_CardBundleTable, &g_gc_card_bundle_table },
 #endif
-    { &PatchableValue_AssignAndMarkCards_WriteBarrierState, &g_write_barrier_state },
-    { &PatchableValue_MarkCards_CardTable, &g_gc_card_table },
-    { &PatchableValue_CardSet_WriteBarrierState, &g_write_barrier_state },
+    { &PatchableValue_AssignRef_BarrierStateAddress, &s_writeBarrierStateAddress },
+    { &PatchableValue_AssignRef_CardTable, &g_gc_card_table },
     { nullptr, nullptr }
 };
+
+static GCWriteBarrierPatchableValue assignRefDynamic2PatchableValues[] =
+{
+#if FEATURE_SATORI_EXTERNAL_OBJECTS
+    { &PatchableValue_AssignRef_SATORI_DYNAMIC2_CardBundleTable, &g_gc_card_bundle_table },
+#endif
+    { &PatchableValue_AssignRef_SATORI_DYNAMIC2_BarrierStateAddress, &s_writeBarrierStateAddress },
+    { &PatchableValue_AssignRef_SATORI_DYNAMIC2_CardTable, &g_gc_card_table },
+    { nullptr, nullptr }
+};
+
+static GCWriteBarrierPatchableValue assignRefSatoriPatchableValues[] =
+{
+#if FEATURE_SATORI_EXTERNAL_OBJECTS
+    { &PatchableValue_AssignRef_SATORI_CardBundleTable, &g_gc_card_bundle_table },
+#endif
+    { &PatchableValue_AssignRef_SATORI_CardTable, &g_gc_card_table },
+    { nullptr, nullptr }
+};
+
+static GCWriteBarrierPatchableValue assignRefSatori2PatchableValues[] =
+{
+#if FEATURE_SATORI_EXTERNAL_OBJECTS
+    { &PatchableValue_AssignRef_SATORI2_CardBundleTable, &g_gc_card_bundle_table },
+#endif
+    { nullptr, nullptr }
+};
+
+static GCWriteBarrierPatchableValue assignRefConcurrentPatchableValues[] =
+{
+#if FEATURE_SATORI_EXTERNAL_OBJECTS
+    { &PatchableValue_AssignRef_SATORI_CONCURRENT_CardBundleTable, &g_gc_card_bundle_table },
+#endif
+    { &PatchableValue_AssignRef_SATORI_CONCURRENT_CardTable, &g_gc_card_table },
+    { nullptr, nullptr }
+};
+
+static GCWriteBarrierPatchableValue assignRefConcurrent2PatchableValues[] =
+{
+#if FEATURE_SATORI_EXTERNAL_OBJECTS
+    { &PatchableValue_AssignRef_SATORI_CONCURRENT2_CardBundleTable, &g_gc_card_bundle_table },
+#endif
+    { &PatchableValue_AssignRef_SATORI_CONCURRENT2_CardTable, &g_gc_card_table },
+    { nullptr, nullptr }
+};
+
+enum AssignRefVariant
+{
+    ASSIGN_REF_SATORI_DYNAMIC2,
+    ASSIGN_REF_SATORI,
+    ASSIGN_REF_SATORI2,
+    ASSIGN_REF_SATORI_CONCURRENT,
+    ASSIGN_REF_SATORI_CONCURRENT2,
+    ASSIGN_REF_VARIANT_COUNT
+};
+
+// The sizes are set by InitializeAssignRefVariants.
+static GCWriteBarrierVariant s_assignRefVariants[ASSIGN_REF_VARIANT_COUNT] =
+{
+    { &RhpAssignRef_SATORI_DYNAMIC2, 0, assignRefDynamic2PatchableValues },
+    { &RhpAssignRef_SATORI, 0, assignRefSatoriPatchableValues },
+    { &RhpAssignRef_SATORI2, 0, assignRefSatori2PatchableValues },
+    { &RhpAssignRef_SATORI_CONCURRENT, 0, assignRefConcurrentPatchableValues },
+    { &RhpAssignRef_SATORI_CONCURRENT2, 0, assignRefConcurrent2PatchableValues },
+};
+
+static void InitializeAssignRefVariants()
+{
+    uint8_t* const ends[ASSIGN_REF_VARIANT_COUNT] =
+    {
+        &RhpAssignRef_SATORI_DYNAMIC2_End,
+        &RhpAssignRef_SATORI_End,
+        &RhpAssignRef_SATORI2_End,
+        &RhpAssignRef_SATORI_CONCURRENT_End,
+        &RhpAssignRef_SATORI_CONCURRENT2_End,
+    };
+
+#ifdef _DEBUG
+    uint8_t* const checkedEntries[ASSIGN_REF_VARIANT_COUNT] =
+    {
+        &RhpCheckedEntry_SATORI_DYNAMIC2,
+        &RhpCheckedEntry_SATORI,
+        &RhpCheckedEntry_SATORI2,
+        &RhpCheckedEntry_SATORI_CONCURRENT,
+        &RhpCheckedEntry_SATORI_CONCURRENT2,
+    };
+
+    // The EE copies the helpers with their alignment within a cache line, the variants rely on that.
+    _ASSERTE((uintptr_t)&RhpCheckedAssignRef % 64 == 0);
+    _ASSERTE((uintptr_t)&RhpAssignRef % 64 == 0);
+#endif
+
+    for (int i = 0; i < ASSIGN_REF_VARIANT_COUNT; i++)
+    {
+        GCWriteBarrierVariant* variant = &s_assignRefVariants[i];
+        variant->AssignRefSize = (uintptr_t)ends[i] - (uintptr_t)variant->AssignRef;
+
+        // A variant replaces RhpAssignRef, and RhpCheckedAssignRef jumps to RhpCheckedEntry in whichever one runs.
+        _ASSERTE(variant->AssignRefSize <= (uintptr_t)&RhpAssignRef_End - (uintptr_t)&RhpAssignRef);
+        _ASSERTE((uintptr_t)checkedEntries[i] - (uintptr_t)variant->AssignRef == (uintptr_t)&RhpCheckedEntry - (uintptr_t)&RhpAssignRef);
+    }
+}
 #endif // defined(TARGET_AMD64) || defined(TARGET_ARM64)
+
+// The variant of RhpAssignRef for the barrier state (see GCWriteBarrierVariant), which the EE runs until the GC
+// changes the state with EE suspended again, or null for RhpAssignRef itself, which reads the state.
+// isFullGc tells whether the GC that marks concurrently is a full GC, for BARRIER_STATE_CONCURRENT.
+const GCWriteBarrierVariant* SatoriGC::GetAssignRefVariant(int barrierState, bool isFullGc)
+{
+#if defined(TARGET_AMD64) || defined(TARGET_ARM64)
+    // Without concurrent GC the barrier state changes only while EE is suspended, when the GC switches the variant
+    // too, thus the variant does not need to check the state. Otherwise the state may become concurrent while EE runs,
+    // and the variant must read it.
+    bool isStateStable = !SatoriUtil::IsConcurrentEnabled();
+    switch (barrierState)
+    {
+    case SatoriRecycler::BARRIER_STATE_CONCURRENT:
+        // A full GC marks through objects of any generation, while a gen1 GC does not need cards for tenured ones.
+        return &s_assignRefVariants[isFullGc ? ASSIGN_REF_SATORI_CONCURRENT2 : ASSIGN_REF_SATORI_CONCURRENT];
+    case SatoriRecycler::BARRIER_STATE_SKIPPING_CARDS:
+        // The next GC is a full GC, thus cards are not needed until the GC marks concurrently.
+        return &s_assignRefVariants[isStateStable ? ASSIGN_REF_SATORI2 : ASSIGN_REF_SATORI_DYNAMIC2];
+    default:
+        _ASSERTE(barrierState == SatoriRecycler::BARRIER_STATE_NOT_CONCURRENT);
+        return isStateStable ? &s_assignRefVariants[ASSIGN_REF_SATORI] : nullptr;
+    }
+#else
+    return nullptr;
+#endif
+}
 
 void SatoriGC::GetAssignRefFunctions(void** assignRef, size_t* assignRefSize, void** assignRefChecked, size_t* assignRefCheckedSize, uintptr_t** avLocationsList, GCWriteBarrierPatchableValue** patchableValues)
 {
     *assignRef = (void*)&RhpAssignRef;
+    // RhpAssignRef has room for its variants.
     *assignRefSize = (uintptr_t)&RhpAssignRef_End - (uintptr_t)&RhpAssignRef;
     *assignRefChecked = (void*)&RhpCheckedAssignRef;
     *assignRefCheckedSize = (uintptr_t)&RhpCheckedAssignRef_End - (uintptr_t)&RhpCheckedAssignRef;
@@ -496,6 +679,11 @@ HRESULT SatoriGC::Initialize()
     g_totalPhysicalMem = GCToOSInterface::GetPhysicalMemoryLimit(&g_isRestrictedPhysicalMem);
     GCConfig::SetGCHighMemPercent(SatoriUtil::HighMemoryPercent());
     GCConfig::SetLOHThreshold(GetLOHThreshold());
+
+#if defined(TARGET_AMD64) || defined(TARGET_ARM64)
+    // ahead of the heap, the recycler asks for a variant of RhpAssignRef when it initializes
+    InitializeAssignRefVariants();
+#endif
 
     SatoriUtil::Initialize();
     SatoriObject::Initialize();

@@ -61,7 +61,7 @@ static const int MIN_GEN1_BUDGET = 2 * Satori::REGION_SIZE_GRANULARITY;
 
 extern "C" uint8_t *g_write_barrier_state = 0;
 
-// Publishes the barrier state to the barriers via the patchable state values (see GetAssignRefFunctions).
+// Publishes the barrier state to the barriers.
 void ToggleWriteBarrier(int barrierState, bool eeSuspended)
 {
     // only the states that have a published counterpart could be set

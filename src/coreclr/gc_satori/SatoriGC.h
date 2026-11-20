@@ -58,6 +58,8 @@ private:
 
 public:
     SatoriHeap* GetHeap() { return m_heap; }
+
+    static const GCWriteBarrierVariant* GetAssignRefVariant(int barrierState, bool isFullGc);
     
     // Inherited via IGCHeap
     virtual bool IsValidSegmentSize(size_t size) override;
