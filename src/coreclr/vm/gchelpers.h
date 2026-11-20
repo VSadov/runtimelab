@@ -78,6 +78,8 @@ extern int SwitchToWriteWatchBarrier(bool isRuntimeSuspended);
 extern int SwitchToNonWriteWatchBarrier(bool isRuntimeSuspended);
 extern void FlushWriteBarrierInstructionCache();
 extern void UpdateCustomWriteBarrierGlobals();
+struct GCWriteBarrierVariant;
+extern void SwitchCustomWriteBarrierVariant(const GCWriteBarrierVariant* variant, bool isRuntimeSuspended);
 
 extern void ThrowOutOfMemoryDimensionsExceeded();
 

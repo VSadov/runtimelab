@@ -191,6 +191,13 @@ static size_t s_customCheckedAssignRefSize;
 // GCWriteBarrierPatchableValue and GetAssignRefFunctions). Null until InitJITWriteBarrierHelpers
 // has run for a GC_HEAP_CUSTOM heap.
 static GCWriteBarrierPatchableValue* s_customAssignRefPatchableValues = nullptr;
+// The custom GC's assign-reference helper (the original), once InitJITWriteBarrierHelpers has copied it.
+static BYTE* s_customAssignRef = nullptr;
+// The variant of the custom assign-reference helper that runs in its place in the copy (see GCWriteBarrierVariant),
+// or null if the helper itself does.
+static const GCWriteBarrierVariant* s_customAssignRefVariant = nullptr;
+// A variant that the GC asked for before InitJITWriteBarrierHelpers copied the helpers.
+static const GCWriteBarrierVariant* s_pendingCustomAssignRefVariant = nullptr;
 
 BYTE* GetWriteBarrierCodeLocation(VOID* barrier)
 {
@@ -222,7 +229,47 @@ PCODE AdjustWriteBarrierIP(PCODE controlPc)
     _ASSERTE(IsIPInWriteBarrierCodeCopy(controlPc));
 
     // Pretend we were executing the barrier function at its original location so that the unwinder can unwind the frame
-    return (PCODE)s_barrierOriginal + (controlPc - (PCODE)s_barrierCopy);
+    TADDR offset = controlPc - (PCODE)s_barrierCopy;
+    if (s_customAssignRefVariant != nullptr)
+    {
+        // The assign-reference helper is replaced with a variant, the original location is in the variant.
+        TADDR assignRefOffset = (TADDR)s_customAssignRef - (TADDR)s_barrierOriginal;
+        if (offset >= assignRefOffset && offset - assignRefOffset < s_customAssignRefSize)
+        {
+            return (PCODE)s_customAssignRefVariant->AssignRef + (offset - assignRefOffset);
+        }
+    }
+
+    return (PCODE)s_barrierOriginal + offset;
+}
+
+// Sets a patchable global-value slot in the copy of the custom GC's helpers to the current value of its source.
+static void UpdateCustomWriteBarrierSlot(UINT_PTR* slot, void* source)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    // The slot must be 8-byte aligned so that patching it is a single atomic store (the
+    // helpers align their slots; see writebarrier.asm).
+    _ASSERTE(((UINT_PTR)slot % sizeof(UINT_PTR)) == 0);
+
+    UINT_PTR value = *(UINT_PTR*)source;
+    if (*slot != value)
+    {
+        ExecutableWriterHolder<UINT_PTR> slotWriterHolder(slot, sizeof(UINT_PTR));
+        *slotWriterHolder.GetRW() = value;
+        FlushInstructionCache(GetCurrentProcess(), slot, sizeof(UINT_PTR));
+    }
+}
+
+// The location in the copy of a slot of the variant that runs in place of the custom assign-reference helper.
+static UINT_PTR* GetCustomAssignRefVariantSlotLocation(void* slot)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    _ASSERTE((BYTE*)slot >= (BYTE*)s_customAssignRefVariant->AssignRef &&
+             (BYTE*)slot < (BYTE*)s_customAssignRefVariant->AssignRef + s_customAssignRefVariant->AssignRefSize);
+
+    return (UINT_PTR*)(GetWriteBarrierCodeLocation(s_customAssignRef) + ((BYTE*)slot - (BYTE*)s_customAssignRefVariant->AssignRef));
 }
 
 // Refreshes the patchable global-value slots embedded in the custom GC's assign-reference helpers
@@ -243,20 +290,83 @@ void UpdateCustomWriteBarrierGlobals()
 
     for (GCWriteBarrierPatchableValue* patchableValue = s_customAssignRefPatchableValues; patchableValue != nullptr && patchableValue->Slot != nullptr; patchableValue++)
     {
-        UINT_PTR* slot = (UINT_PTR*)GetWriteBarrierCodeLocation(patchableValue->Slot);
-
-        // The slot must be 8-byte aligned so that patching it is a single atomic store (the
-        // amd64 helpers hand-tune their NOP padding to guarantee this; see writebarrier.asm).
-        _ASSERTE(((UINT_PTR)slot % sizeof(UINT_PTR)) == 0);
-
-        UINT_PTR value = *(UINT_PTR*)patchableValue->Source;
-        if (*slot != value)
+        // The slots of the assign-reference helper are not in the copy while a variant runs in its place.
+        if (s_customAssignRefVariant != nullptr &&
+            (BYTE*)patchableValue->Slot >= s_customAssignRef &&
+            (BYTE*)patchableValue->Slot < s_customAssignRef + s_customAssignRefSize)
         {
-            ExecutableWriterHolder<UINT_PTR> slotWriterHolder(slot, sizeof(UINT_PTR));
-            *slotWriterHolder.GetRW() = value;
-            FlushInstructionCache(GetCurrentProcess(), slot, sizeof(UINT_PTR));
+            continue;
+        }
+
+        UpdateCustomWriteBarrierSlot((UINT_PTR*)GetWriteBarrierCodeLocation(patchableValue->Slot), patchableValue->Source);
+    }
+
+    if (s_customAssignRefVariant != nullptr)
+    {
+        for (GCWriteBarrierPatchableValue* patchableValue = s_customAssignRefVariant->PatchableValues; patchableValue != nullptr && patchableValue->Slot != nullptr; patchableValue++)
+        {
+            UpdateCustomWriteBarrierSlot(GetCustomAssignRefVariantSlotLocation(patchableValue->Slot), patchableValue->Source);
         }
     }
+}
+
+// Copies a variant of the custom assign-reference helper, or the helper itself if the variant is null, over the copy
+// of the helper (see GCWriteBarrierVariant).
+// No thread may run the helper meanwhile: the runtime is suspended, or the helpers are being copied.
+static void InstallCustomAssignRefVariant(const GCWriteBarrierVariant* variant)
+{
+    CONTRACTL
+    {
+        MODE_ANY;
+        GC_NOTRIGGER;
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    if (variant == s_customAssignRefVariant)
+    {
+        return;
+    }
+
+    const void* code = variant != nullptr ? variant->AssignRef : s_customAssignRef;
+    size_t size = variant != nullptr ? variant->AssignRefSize : s_customAssignRefSize;
+    _ASSERTE_ALL_BUILDS(code != nullptr && size <= s_customAssignRefSize);
+
+    BYTE* location = GetWriteBarrierCodeLocation(s_customAssignRef);
+    {
+        ExecutableWriterHolder<BYTE> writerHolder(location, size);
+        memcpy(writerHolder.GetRW(), code, size);
+    }
+
+    // The slots in the copied code have their values in the original.
+    s_customAssignRefVariant = variant;
+    UpdateCustomWriteBarrierGlobals();
+
+    FlushInstructionCache(GetCurrentProcess(), location, size);
+}
+
+// Switches the custom assign-reference helper to a variant, or back to the helper itself if the variant is null,
+// see GCWriteBarrierVariant.
+void SwitchCustomWriteBarrierVariant(const GCWriteBarrierVariant* variant, bool isRuntimeSuspended)
+{
+    CONTRACTL
+    {
+        MODE_ANY;
+        GC_NOTRIGGER;
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    if (s_customAssignRef == nullptr)
+    {
+        // The helpers are not copied yet. The variant is used when they are.
+        s_pendingCustomAssignRefVariant = variant;
+        return;
+    }
+
+    // The helper is replaced in place, so no thread may run it.
+    _ASSERTE_ALL_BUILDS(isRuntimeSuspended);
+    InstallCustomAssignRefVariant(variant);
 }
 
 #ifdef TARGET_X86
@@ -1505,7 +1615,12 @@ void InitJITWriteBarrierHelpers()
         // GCWriteBarrierPatchableValue) with the globals' current values. Custom barriers are
         // always copied; GetWriteBarrierCodeLocation resolves each slot into the allocated copy.
         s_customAssignRefPatchableValues = assignRefPatchableValues;
+        s_customAssignRef = (BYTE*)assignRef;
         UpdateCustomWriteBarrierGlobals();
+
+        // The GC may have asked for a variant of the assign-reference helper before the helpers were copied.
+        InstallCustomAssignRefVariant(s_pendingCustomAssignRefVariant);
+        s_pendingCustomAssignRefVariant = nullptr;
 
         assignRef = GetWriteBarrierCodeLocation(assignRef);
         assignRefChecked = GetWriteBarrierCodeLocation(assignRefChecked);

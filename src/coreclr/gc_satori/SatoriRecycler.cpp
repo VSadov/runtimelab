@@ -39,6 +39,7 @@
 #include "SatoriPage.h"
 #include "SatoriPage.inl"
 #include "SatoriRecycler.h"
+#include "SatoriGC.h"
 #include "SatoriObject.h"
 #include "SatoriObject.inl"
 #include "SatoriRegion.h"
@@ -61,8 +62,10 @@ static const int MIN_GEN1_BUDGET = 2 * Satori::REGION_SIZE_GRANULARITY;
 
 extern "C" uint8_t *g_write_barrier_state = 0;
 
-// Publishes the barrier state to the barriers via the patchable state values (see GetAssignRefFunctions).
-void ToggleWriteBarrier(int barrierState, bool eeSuspended)
+// Publishes the barrier state to the barriers.
+// When EE is suspended, also asks the EE to run the variant of the barrier for the state (see GetAssignRefVariant),
+// isFullGc tells whether the GC that marks concurrently is a full GC, for BARRIER_STATE_CONCURRENT.
+void ToggleWriteBarrier(int barrierState, bool eeSuspended, bool isFullGc = false)
 {
     // only the states that have a published counterpart could be set
     _ASSERTE(barrierState == SatoriRecycler::BARRIER_STATE_NOT_CONCURRENT ||
@@ -80,6 +83,18 @@ void ToggleWriteBarrier(int barrierState, bool eeSuspended)
     g_write_barrier_state = args.write_watch_table;
 
     args.is_runtime_suspended = eeSuspended;
+    if (eeSuspended)
+    {
+        args.parameters_mask |= WriteBarrierParametersMask::AssignRefVariant;
+        args.assign_ref_variant = SatoriGC::GetAssignRefVariant(barrierState, isFullGc);
+    }
+    else
+    {
+        // The variants that do not read the state are installed only with EE suspended, and only for states that
+        // do not change while EE runs (see GetAssignRefVariant).
+        _ASSERTE(barrierState == SatoriRecycler::BARRIER_STATE_CONCURRENT && SatoriUtil::IsConcurrentEnabled());
+    }
+
     GCToEEInterface::StompWriteBarrier(&args);
 
     if (barrierState == SatoriRecycler::BARRIER_STATE_CONCURRENT && !eeSuspended)
@@ -1123,6 +1138,12 @@ void SatoriRecycler::BlockingMarkForConcurrent()
 
         size_t blockingStart = minipal_hires_ticks();
         GCToEEInterface::SuspendEE(SUSPEND_FOR_GC_PREP);
+
+        // The barrier became concurrent while EE was running. EE is suspended now anyway, so let it switch to
+        // a barrier that assumes concurrent marking rather than checks the barrier state.
+        // The blocking collection switches the barrier back, when it changes the barrier state.
+        _ASSERTE(IsBarrierConcurrent());
+        ToggleWriteBarrier(BARRIER_STATE_CONCURRENT, /* eeSuspended */ true, /* isFullGc */ m_condemnedGeneration == 2);
 
         // the concurrent pass has already filtered what is in the alternate, make it usable again.
         // whatever is left in m_reusableRegions it did not reach - the loop below will filter that.
