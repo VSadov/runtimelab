@@ -72,7 +72,10 @@ enum class WriteBarrierParametersMask
     RegionShr = 1 << 10,
     RegionUseBitwiseWriteBarrier = 1 << 11,
     WriteWatchTable = 1 << 12,
+    AssignRefVariant = 1 << 13,
 };
+
+struct GCWriteBarrierVariant;
 
 // Arguments to GCToEEInterface::StompWriteBarrier
 struct WriteBarrierParameters
@@ -138,6 +141,10 @@ struct WriteBarrierParameters
 
     // bitmask indicating which parameters are valid in this structure. Used for custom GCs
     WriteBarrierParametersMask parameters_mask;
+
+    // The variant of the custom assign-reference helper that the EE should run from now on (see GCWriteBarrierVariant),
+    // or null for the helper itself. Used for WriteBarrierOp::StompCustom with WriteBarrierParametersMask::AssignRefVariant.
+    const GCWriteBarrierVariant* assign_ref_variant;
 };
 
 using WriteBarrierFunction = void (*)(void* context, Object** dst, Object* ref);
@@ -171,6 +178,28 @@ struct GCWriteBarrierPatchableValue
     void* Slot;
     // Address of the global variable whose value is cached at Slot.
     void* Source;
+};
+
+// A variant of the custom assign-reference helper (see GetAssignRefFunctions) that a GC can ask the EE to run
+// instead of the current one, so that it does not need to check at run time what it can tell from the GC's state.
+// The EE copies the variant over its copy of the helper, so:
+//  - it may not be larger than the helper (assignRefSize),
+//  - the code that jumps into the helper from outside of it (the checked helper) must find the same code at the same
+//    offsets in every variant,
+//  - like the helper, it must be relocatable, with its patchable values listed in PatchableValues,
+//  - its access violation locations must be in the list that GetAssignRefFunctions returns.
+// The EE switches to a variant, or back to the helper itself, only when the GC asks for it with the runtime suspended
+// (see WriteBarrierParametersMask::AssignRefVariant). If the EE has not copied the helpers yet, it uses the variant
+// when it does. An EE that does not know about the variants ignores the request and keeps running the helper, which
+// must therefore work in any state of the GC.
+struct GCWriteBarrierVariant
+{
+    // The code of the variant, in place of the assign-reference helper.
+    void* AssignRef;
+    // The size of the code.
+    size_t AssignRefSize;
+    // The patchable values embedded in the variant (Slot addresses are in AssignRef), see GCWriteBarrierPatchableValue.
+    GCWriteBarrierPatchableValue* PatchableValues;
 };
 
 struct FinalizerWorkItem
@@ -1148,7 +1177,9 @@ public:
     // helpers and any intervening bytes must form a relocatable block: internal relative references
     // must stay within the block, and any reference to an external global variable must instead be
     // listed in patchableValues (and read from the patched slot) so the helper remains correct no
-    // matter where the EE copies it to.
+    // matter where the EE copies it to. A GC that switches the assign-reference helper to its variants
+    // (see GCWriteBarrierVariant) reports the space that the variants may take as assignRefSize, and the
+    // access violation locations of all the variants.
     virtual void GetAssignRefFunctions(void** assignRef, size_t* assignRefSize, void** assignRefChecked, size_t* assignRefCheckedSize, uintptr_t** avLocationsList, GCWriteBarrierPatchableValue** patchableValues) PURE_VIRTUAL
 };
 

@@ -1298,6 +1298,10 @@ void GCToEEInterface::StompWriteBarrier(WriteBarrierParameters* args)
         {
             g_write_watch_table = args->write_watch_table;
         }
+        if (HasFlag(args->parameters_mask, WriteBarrierParametersMask::AssignRefVariant))
+        {
+            SwitchCustomWriteBarrierVariant(args->assign_ref_variant, is_runtime_suspended);
+        }
         
         stompWBCompleteActions |= ::SwitchToWriteWatchBarrier(is_runtime_suspended);
         break;
